@@ -169,10 +169,18 @@ function newDraft(mapId) {
   S.showAll = false;
   S.recent = [mapId, ...S.recent.filter(id => id !== mapId)].slice(0, 6);
   S.view = 'draft';
+  viewChangedAt = Date.now();
   save();
   render();
   window.scrollTo(0, 0);
 }
+
+// The tap that opens a draft can land on the search box that appears under the finger,
+// which would pop up the iPhone keyboard. Ignore focus that arrives right after a screen change.
+let viewChangedAt = 0;
+document.addEventListener('focusin', e => {
+  if (e.target.tagName === 'INPUT' && Date.now() - viewChangedAt < 500) e.target.blur();
+});
 
 function snapshot() {
   S.history.push(JSON.stringify(S.draft));
@@ -588,7 +596,7 @@ $app.addEventListener('click', e => {
   }
 
   switch (ds.action) {
-    case 'home': S.view = 'maps'; save(); render(); window.scrollTo(0, 0); break;
+    case 'home': S.view = 'maps'; viewChangedAt = Date.now(); save(); render(); window.scrollTo(0, 0); break;
     case 'undo': undo(); break;
     case 'reset': {
       snapshot();
