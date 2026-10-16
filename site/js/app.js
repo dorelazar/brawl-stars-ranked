@@ -232,6 +232,12 @@ function removeFrom(list, id) {
 
 // ---------- Views ----------
 
+// Re-render only one region, leaving inputs (and the iPhone keyboard) alone.
+function refresh(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html(); else render();
+}
+
 function render() {
   if (!S.meta) return;
   const y = window.scrollY;
@@ -271,13 +277,6 @@ function mapCard(m, badge) {
 }
 
 function mapsView() {
-  const ranked = new Set(S.stats?.rankedMaps || []);
-  const live = liveMapIds();
-  const badge = m => ranked.has(m.id) ? { cls: '', text: 'Ranked' } : live.has(m.id) ? { cls: 'live', text: 'Live' } : null;
-  const order = m => (ranked.has(m.id) ? 0 : live.has(m.id) ? 1 : 2);
-  const sortMaps = list => list.sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name));
-
-  const otherModes = S.meta.modes.filter(m => !RANKED_MODES.includes(m.id)).map(m => m.id);
   const modes = [...RANKED_MODES.filter(id => modeById.has(id)), 'other'];
   const chips = modes.map(id => {
     const m = modeById.get(id);
@@ -285,6 +284,28 @@ function mapsView() {
     const label = id === 'other' ? 'Other modes' : m.name;
     return `<button class="chip ${S.mode === id ? 'on' : ''}" style="--chip-color:${esc(color)}" data-mode="${id}">${id === 'other' ? '' : modeIcon(id)}${esc(label)}</button>`;
   }).join('');
+
+  return `
+    <header class="top">
+      <h1>Brawl Draft</h1>
+      <button class="icon-btn" data-sheet="mine" aria-label="My brawlers">${ICON.user}</button>
+      <button class="icon-btn" data-sheet="about" aria-label="About and data">${ICON.info}</button>
+    </header>
+    ${statusBar()}
+    <div class="search">${ICON.search}<input id="mapq" type="search" placeholder="Search maps" value="${esc(S.mapQuery)}" autocomplete="off" enterkeyhint="search">${clearBtn('map', S.mapQuery)}</div>
+    <div class="chips">${chips}</div>
+    <div id="r-map">${mapsBody()}</div>`;
+}
+
+// The part of the maps screen that changes while typing (the search box itself is never re-created,
+// so the iPhone keyboard stays open).
+function mapsBody() {
+  const ranked = new Set(S.stats?.rankedMaps || []);
+  const live = liveMapIds();
+  const badge = m => ranked.has(m.id) ? { cls: '', text: 'Ranked' } : live.has(m.id) ? { cls: 'live', text: 'Live' } : null;
+  const order = m => (ranked.has(m.id) ? 0 : live.has(m.id) ? 1 : 2);
+  const sortMaps = list => list.sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name));
+  const otherModes = S.meta.modes.filter(m => !RANKED_MODES.includes(m.id)).map(m => m.id);
 
   const q = S.mapQuery.trim().toLowerCase();
   let body;
@@ -305,18 +326,10 @@ function mapsView() {
     body += `<div class="section-title"><h2>${esc(title)}</h2><span>${nRanked ? `${nRanked} in ranked now · ` : ''}${list.length} maps</span></div>`;
     body += list.length ? `<div class="maps">${list.map(m => mapCard(m, badge(m))).join('')}</div>` : `<div class="empty">No maps for this mode right now.</div>`;
   }
-
-  return `
-    <header class="top">
-      <h1>Brawl Draft</h1>
-      <button class="icon-btn" data-sheet="mine" aria-label="My brawlers">${ICON.user}</button>
-      <button class="icon-btn" data-sheet="about" aria-label="About and data">${ICON.info}</button>
-    </header>
-    ${statusBar()}
-    <div class="search">${ICON.search}<input id="mapq" type="search" placeholder="Search maps" value="${esc(S.mapQuery)}" autocomplete="off" enterkeyhint="search">${S.mapQuery ? '<button class="clear" data-clear="map" aria-label="Clear">×</button>' : ''}</div>
-    <div class="chips">${chips}</div>
-    ${body}`;
+  return body;
 }
+
+const clearBtn = (which, value) => `<button class="clear" data-clear="${which}" aria-label="Clear" ${value ? '' : 'hidden'}>×</button>`;
 
 function slotsFor(team) {
   const d = S.draft;
@@ -438,7 +451,7 @@ const verbFor = step => step.kind === 'ban' ? 'ban' : step.team === 'blue' ? 'pi
 // Name search sits right under the turn banner: type 2 letters + Enter during the draft timer.
 function quickSearch(step) {
   const placeholder = step.kind === 'ban' ? 'Find a brawler to ban' : step.team === 'blue' ? 'Find your pick' : 'Find their pick';
-  return `<div class="search quick">${ICON.search}<input id="gridq" type="search" placeholder="${placeholder} — type 2 letters" value="${esc(S.gridQuery)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done">${S.gridQuery ? '<button class="clear" data-clear="grid" aria-label="Clear">×</button>' : ''}</div>`;
+  return `<div class="search quick">${ICON.search}<input id="gridq" type="search" placeholder="${placeholder} — type 2 letters" value="${esc(S.gridQuery)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done">${clearBtn('grid', S.gridQuery)}</div>`;
 }
 
 function searchResults(step) {
@@ -486,8 +499,19 @@ function draftView() {
     </div>
     ${turnBanner(step)}
     ${edge != null ? `<div class="edge"><div class="edge-row"><span>Draft edge</span><b>You ${Math.round(edge * 100)}% · ${Math.round((1 - edge) * 100)}% Them</b></div><div class="edge-bar"><i style="width:${edge * 100}%"></i></div></div>` : ''}
-    ${step.kind === 'done' ? '' : quickSearch(step)}
-    ${step.kind === 'done' ? '' : S.gridQuery.trim() ? searchResults(step) : recommendations(step) + brawlerGrid(step)}`;
+    ${step.kind === 'done' ? '' : `${quickSearch(step)}<div id="r-draft">${draftBody(step)}</div>`}`;
+}
+
+function draftBody(step) {
+  return S.gridQuery.trim() ? searchResults(step) : recommendations(step) + brawlerGrid(step);
+}
+
+function mineTiles() {
+  const q = S.mineQuery.trim().toLowerCase();
+  return S.meta.brawlers.filter(b => !q || b.name.toLowerCase().includes(q)).map(b => {
+    const on = !S.mine || S.mine.has(b.id);
+    return `<button class="tile ${on ? 'mine-on' : 'mine-off'}" data-mine="${b.id}" aria-pressed="${on}">${img(b.id)}<span>${esc(b.name)}</span></button>`;
+  }).join('') || '<div class="empty" style="grid-column:1/-1">No brawler matches.</div>';
 }
 
 function sheetView() {
@@ -519,17 +543,13 @@ function sheetView() {
       <div class="row"><button class="text-btn" data-sheet="">Close</button></div>`;
   } else if (S.sheet === 'mine') {
     const mine = S.mine;
-    const q = S.mineQuery.trim().toLowerCase();
-    const tiles = S.meta.brawlers.filter(b => !q || b.name.toLowerCase().includes(q)).map(b => {
-      const on = !mine || mine.has(b.id);
-      return `<button class="tile ${on ? 'mine-on' : 'mine-off'}" data-mine="${b.id}" aria-pressed="${on}">${img(b.id)}<span>${esc(b.name)}</span></button>`;
-    }).join('');
+    const tiles = mineTiles();
     inner = `<h2>My brawlers</h2>
       <p>Turn off brawlers you don't have or don't play. Your suggestions only use the ones that stay on. Enemy predictions still use everyone.</p>
       <div class="row"><button class="text-btn" data-mine-all="on">All on</button><button class="text-btn" data-mine-all="off">All off</button><button class="text-btn" data-sheet="">Done</button></div>
       <p style="margin:6px 0 10px"><b>${mine ? mine.size : S.meta.brawlers.length}</b> of ${S.meta.brawlers.length} on</p>
-      <div class="search">${ICON.search}<input id="mineq" type="search" placeholder="Search brawlers" value="${esc(S.mineQuery)}" autocomplete="off" autocorrect="off" spellcheck="false"></div>
-      <div class="grid">${tiles}</div>`;
+      <div class="search">${ICON.search}<input id="mineq" type="search" placeholder="Search brawlers" value="${esc(S.mineQuery)}" autocomplete="off" autocorrect="off" spellcheck="false">${clearBtn('mine', S.mineQuery)}</div>
+      <div class="grid" id="r-mine">${tiles}</div>`;
   }
   return `<div class="sheet-bg" data-sheet=""></div><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${inner}</div>`;
 }
@@ -548,8 +568,13 @@ $app.addEventListener('click', e => {
   if (ds.remove) { removeFrom(ds.remove, Number(ds.id)); return; }
   if (ds.class) { S.gridClass = ds.class; render(); return; }
   if (ds.first) { S.draft.firstTeam = ds.first; save(); render(); return; }
-  if (ds.clear === 'map') { S.mapQuery = ''; render(); document.getElementById('mapq')?.focus(); return; }
-  if (ds.clear === 'grid') { S.gridQuery = ''; render(); document.getElementById('gridq')?.focus(); return; }
+  if (ds.clear) {
+    const input = t.parentElement.querySelector('input');
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+    return;
+  }
   if (ds.mine) {
     const id = Number(ds.mine);
     if (!S.mine) S.mine = new Set(S.meta.brawlers.map(b => b.id));
@@ -580,9 +605,11 @@ $app.addEventListener('click', e => {
 });
 
 $app.addEventListener('input', e => {
-  if (e.target.id === 'mapq') { S.mapQuery = e.target.value; render(); }
-  if (e.target.id === 'gridq') { S.gridQuery = e.target.value; render(); }
-  if (e.target.id === 'mineq') { S.mineQuery = e.target.value; render(); }
+  const t = e.target;
+  if (t.id === 'mapq') { S.mapQuery = t.value; refresh('r-map', mapsBody); }
+  if (t.id === 'gridq') { S.gridQuery = t.value; refresh('r-draft', () => draftBody(currentStep())); }
+  if (t.id === 'mineq') { S.mineQuery = t.value; refresh('r-mine', mineTiles); }
+  t.parentElement.querySelector('.clear')?.toggleAttribute('hidden', !t.value);
 });
 
 // Enter in the brawler search picks the only (or first) match: fast during the draft timer.
