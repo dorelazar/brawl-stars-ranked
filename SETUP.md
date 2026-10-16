@@ -65,7 +65,7 @@ You'll do 4 things:
 4. Wait about 5–15 minutes until it shows a green check.
    - The run summary shows the app's address, like `https://YOUR-USERNAME.github.io/brawl-stars/`.
 
-From now on it runs by itself every night at 03:17 UTC.
+From now on it runs by itself every 4 hours.
 The first day's data is a decent start; it gets better as it builds up to 14 days.
 
 ## 4. Add it to your iPhone

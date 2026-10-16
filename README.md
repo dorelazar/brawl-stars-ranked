@@ -9,7 +9,7 @@ with the reasons ("Strong on this map", "Beats Mortis", "Good with Poco", "Crow 
 ## How it works
 
 ```
-Every night (GitHub Actions)
+Every 4 hours (GitHub Actions)
   fetch-meta.mjs   → brawlers, maps, modes          (Brawlify public API)
   collect.mjs      → recent battles of top players  (official Brawl Stars API)
   build-stats.mjs  → last 14 days → site/data/stats.json

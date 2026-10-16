@@ -1,4 +1,4 @@
-# Every night: refresh brawlers/maps, collect new ranked battles, rebuild stats,
+# Every 4 hours: refresh brawlers/maps, collect new ranked battles, rebuild stats,
 # and publish the app to GitHub Pages. Collected counters live on the `data`
 # branch (one squashed commit, so the repo never grows).
 
@@ -6,7 +6,7 @@ name: Daily update
 
 on:
   schedule:
-    - cron: '17 3 * * *'   # 03:17 UTC every day
+    - cron: '17 */4 * * *'  # every 4 hours: more battles, and quick recovery after maintenance
   workflow_dispatch:        # "Run workflow" button
   push:
     branches: [main]

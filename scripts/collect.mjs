@@ -84,6 +84,12 @@ async function main() {
 
   // Current map rotation for the app's home screen.
   const rotation = await api('/events/rotation');
+  if (!Array.isArray(rotation) && /inMaintenance/.test(firstFailure['503'] || '')) {
+    // Supercell switches the API off during game updates. Not our fault and nothing to fix:
+    // the next scheduled run picks up where we left off.
+    console.log('::warning title=Brawl Stars API in maintenance::Supercell has the API in maintenance (usually during a game update). Skipping this run; the next scheduled run will collect.');
+    return;
+  }
   if (!Array.isArray(rotation)) {
     fail(`Could not reach the Brawl Stars API (${JSON.stringify(firstFailure)}). Nothing was collected.`);
   }
