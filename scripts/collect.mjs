@@ -40,12 +40,28 @@ async function api(path, attempt = 0) {
     await new Promise(r => setTimeout(r, 1000 * 2 ** attempt));
     return api(path, attempt + 1);
   }
+  const text = res.text ? await res.text().catch(() => '') : String(res.err?.cause?.code || res.err?.message || '');
   if (res.status === 403) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(`API key rejected (403 ${body.reason || ''}: ${body.message || ''}). ` +
+    let body = {};
+    try { body = JSON.parse(text); } catch { /* not JSON, e.g. a firewall page */ }
+    fail(`API key rejected (403 ${body.reason || ''}: ${body.message || text.slice(0, 200)}). ` +
       'Check that the key allows IP 45.79.218.79 when using the RoyaleAPI proxy.');
   }
-  return null; // 404 (player gone) and other one-off failures are skipped
+  // 404 (player gone) and other one-off failures are skipped, but counted so a broken
+  // connection can't look like a successful run.
+  const k = String(res.status);
+  failures[k] = (failures[k] || 0) + 1;
+  if (!firstFailure[k]) firstFailure[k] = `${path} -> ${res.status}: ${text.replace(/\s+/g, ' ').slice(0, 300)}`;
+  return null;
+}
+
+const failures = {};     // HTTP status -> count
+const firstFailure = {}; // HTTP status -> example
+
+// Prints a GitHub Actions error annotation (visible on the run page) and stops.
+function fail(msg) {
+  console.log(`::error title=Battle collection failed::${msg}`);
+  throw new Error(msg);
 }
 
 const enc = tag => encodeURIComponent(tag.startsWith('#') ? tag : `#${tag}`);
@@ -68,7 +84,10 @@ async function main() {
 
   // Current map rotation for the app's home screen.
   const rotation = await api('/events/rotation');
-  if (Array.isArray(rotation)) {
+  if (!Array.isArray(rotation)) {
+    fail(`Could not reach the Brawl Stars API (${JSON.stringify(firstFailure)}). Nothing was collected.`);
+  }
+  {
     const slim = rotation.map(e => ({
       start: e.startTime, end: e.endTime, mode: e.event?.mode, mapId: e.event?.id, map: e.event?.map,
     }));
@@ -91,6 +110,7 @@ async function main() {
   Object.entries(pool).sort((a, b) => b[1].localeCompare(a[1])).forEach(([t]) => enqueue(t));
   (await seedTags()).forEach(enqueue);
   console.log(`Starting with ${queue.length} players (max ${MAX_PLAYERS}) via ${BASE}`);
+  if (!queue.length) fail(`Could not load any leaderboard players (${JSON.stringify(firstFailure)}).`);
 
   const agg = emptyAgg();
   let fetched = 0, added = 0, usable = 0, next = 0;
@@ -126,7 +146,10 @@ async function main() {
   const merged = mergeAgg(await readJson(dailyPath, emptyAgg()), agg);
   await writeFile(dailyPath, JSON.stringify(merged));
   console.log(`Battle types seen: ${JSON.stringify(types)}`);
-  if (fetched > 0 && usable === 0) console.warn('Warning: no usable 3v3 battles found. The API format may have changed.');
+  console.log(`Failed requests: ${JSON.stringify(failures)} ${JSON.stringify(firstFailure)}`);
+  if (fetched > 0 && usable === 0) {
+    fail(`Fetched ${fetched} battle logs but found no usable 3v3 battles. Failed requests: ${JSON.stringify(failures)}. Types seen: ${JSON.stringify(types)}`);
+  }
   console.log(`Done: ${fetched} logs, ${added} new battles (${agg.battles.ranked} ranked). Today total: ${merged.battles.all}`);
 
   // Housekeeping so the state stays small.

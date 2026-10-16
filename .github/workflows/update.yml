@@ -35,6 +35,7 @@ jobs:
           node-version: 22
 
       - name: Run tests
+        id: tests
         run: npm test
 
       - name: Restore collected data
@@ -56,11 +57,14 @@ jobs:
           BS_API_KEY: ${{ secrets.BS_API_KEY }}
         run: node scripts/collect.mjs state
 
+      # The steps below still run if collection failed, so the app stays online with the
+      # previous stats. The run is still marked failed, which triggers GitHub's email.
       - name: Build stats
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         run: node scripts/build-stats.mjs state
 
       - name: Save collected data
-        if: github.event_name != 'push'
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && github.event_name != 'push' }}
         run: |
           cd state
           [ -d daily ] || exit 0
@@ -73,8 +77,11 @@ jobs:
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" data
 
       - uses: actions/configure-pages@v5
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
       - uses: actions/upload-pages-artifact@v3
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         with:
           path: site
       - id: deploy
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         uses: actions/deploy-pages@v4
