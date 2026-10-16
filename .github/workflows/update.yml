@@ -1,0 +1,80 @@
+# Every night: refresh brawlers/maps, collect new ranked battles, rebuild stats,
+# and publish the app to GitHub Pages. Collected counters live on the `data`
+# branch (one squashed commit, so the repo never grows).
+
+name: Daily update
+
+on:
+  schedule:
+    - cron: '17 3 * * *'   # 03:17 UTC every day
+  workflow_dispatch:        # "Run workflow" button
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run tests
+        run: npm test
+
+      - name: Restore collected data
+        run: |
+          if git ls-remote --exit-code --heads origin data >/dev/null; then
+            git fetch --depth 1 origin data
+            git worktree add state FETCH_HEAD
+          else
+            mkdir -p state
+          fi
+
+      - name: Refresh brawlers and maps
+        run: node scripts/fetch-meta.mjs
+
+      - name: Collect ranked battles
+        # Skipped on plain pushes so editing the app doesn't spend API calls.
+        if: github.event_name != 'push'
+        env:
+          BS_API_KEY: ${{ secrets.BS_API_KEY }}
+        run: node scripts/collect.mjs state
+
+      - name: Build stats
+        run: node scripts/build-stats.mjs state
+
+      - name: Save collected data
+        if: github.event_name != 'push'
+        run: |
+          cd state
+          [ -d daily ] || exit 0
+          rm -rf .git
+          git init -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Collected data $(date -u +%F)" || exit 0
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" data
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

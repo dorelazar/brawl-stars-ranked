@@ -1,0 +1,5 @@
+node_modules/
+state/
+site/data/stats.json
+site/data/stats.mock.json
+site/data/rotation.json
