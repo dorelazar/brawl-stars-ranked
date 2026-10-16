@@ -274,3 +274,27 @@ input { font: inherit; color: inherit; }
 .tile .ph { width: 52px; height: 52px; margin-bottom: 2px; }
 .rec .ph { width: 48px; height: 48px; }
 .search.quick { margin: 12px 0 0; }
+
+/* ---------- Game plan & team check ---------- */
+.plan { margin-top: 12px; padding: 12px 14px; border-radius: var(--radius); background: var(--surface); }
+.plan h3 { margin: 0 0 6px; font: 16px var(--display); letter-spacing: .3px; color: var(--yellow); }
+.plan.red h3 { color: var(--red); }
+.plan ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.plan li { display: grid; gap: 1px; padding-left: 14px; position: relative; }
+.plan li::before { content: ''; position: absolute; left: 0; top: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); }
+.plan.red li::before { background: var(--red); }
+.plan li b { font-size: 14px; }
+.plan li span { font-size: 13px; color: var(--muted); }
+.check { display: grid; grid-template-columns: 56px 1fr; gap: 8px; align-items: start; margin-top: 8px; }
+.check > b { font: 14px var(--display); padding-top: 3px; }
+.check.blue > b { color: var(--blue); }
+.check.red > b { color: var(--red); }
+.check div { display: flex; flex-wrap: wrap; gap: 5px; }
+.check span { font-size: 12px; padding: 3px 8px; border-radius: 6px; }
+.check .ok { color: #8ff0b8; background: rgba(61, 220, 132, .1); }
+.check .miss { color: #ffb19c; background: rgba(255, 122, 89, .1); }
+button.edge { display: block; width: 100%; text-align: left; }
+.edge .q { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-3); font-size: 11px; margin-left: 4px; }
+.edge-row { gap: 10px; align-items: baseline; }
+.edge-row > span { white-space: nowrap; }
+.edge-row b { text-align: right; }

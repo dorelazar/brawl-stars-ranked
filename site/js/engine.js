@@ -6,6 +6,8 @@
 // from class-based estimates, so the app still gives sensible advice before
 // any data has been collected.
 
+import { teamNeeds, fit, teamReport, teamScore } from './plan.js';
+
 // ---------- Draft order (Ranked: bans, then picks 1-2-2-1) ----------
 
 export function pickOrder(firstTeam) {
@@ -51,21 +53,6 @@ const CLASS_MODE = {
 CLASS_MODE.brawlHockey = CLASS_MODE.brawlBall;
 CLASS_MODE.basketBrawl = CLASS_MODE.brawlBall;
 CLASS_MODE.wipeout = CLASS_MODE.knockout;
-
-// [attacker, defender, delta] — mirrored automatically.
-const CLASS_VS = [
-  ['Assassin', 'Marksman', .03], ['Assassin', 'Artillery', .03], ['Assassin', 'Support', .015],
-  ['Tank', 'Assassin', .015], ['Tank', 'Artillery', .02], ['Tank', 'Support', .01],
-  ['Damage Dealer', 'Tank', .02], ['Damage Dealer', 'Assassin', .01],
-  ['Controller', 'Tank', .02], ['Controller', 'Assassin', .015],
-  ['Marksman', 'Artillery', .01], ['Marksman', 'Tank', .01],
-  ['Artillery', 'Controller', .01],
-];
-const CLASS_VS_MAP = new Map();
-for (const [a, b, d] of CLASS_VS) {
-  CLASS_VS_MAP.set(`${a}|${b}`, d);
-  CLASS_VS_MAP.set(`${b}|${a}`, -d);
-}
 
 const CLASS_SYN = [
   ['Support', 'Tank', .01], ['Support', 'Assassin', .005], ['Tank', 'Artillery', .005],
@@ -116,8 +103,9 @@ export function createEngine(meta, stats) {
   function counter(a, b) {
     return memo(`v${a}|${b}`, () => {
       const expected = 0.5 + overall(a) - overall(b);
-      const prior = expected + (CLASS_VS_MAP.get(`${cls(a)}|${cls(b)}`) ?? 0);
-      return rate(S.vs[a]?.[b], prior) - expected;
+      // No class-based prior here: type matchups (tank vs damage, assassin vs thrower...) are
+      // handled by the team check in plan.js, so "Beats X" only ever comes from real results.
+      return rate(S.vs[a]?.[b], expected) - expected;
     });
   }
 
@@ -156,6 +144,8 @@ export function createEngine(meta, stats) {
 
     const turn = nextTurn(draft.firstTeam, draft.blue.length, draft.red.length);
     const opponentPicksLeft = turn && turn.team === team ? turn.opponentPicksAfter : (3 - enemies.length);
+    const allyClasses = allies.map(cls);
+    const needs = teamNeeds(allyClasses, enemies.map(e => ({ name: brawlers.get(e)?.name || '?', cls: cls(e) })), draft.mode);
 
     const results = available.map(id => {
       const reasons = [];
@@ -173,6 +163,11 @@ export function createEngine(meta, stats) {
         total += v;
         reasons.push({ type: 'synergy', target: a, v });
       }
+
+      // Team shape and answers to the enemy's picks (see plan.js).
+      const f = fit(cls(id), allyClasses, needs, draft.mode);
+      total += f.v;
+      reasons.push(...f.reasons);
 
       // If the other side still picks after us, they can answer this brawler.
       let risk = 0;
@@ -194,6 +189,7 @@ export function createEngine(meta, stats) {
         map: m,
         games: mapGames(id, draft.mapId),
         reasons: summarize(reasons),
+        allReasons: reasons,
       };
     });
 
@@ -221,16 +217,30 @@ export function createEngine(meta, stats) {
     for (const b of draft.blue) for (const r of draft.red) edge += counter(b, r) / 3;
     const pairs = t => { let s = 0; for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) s += synergy(t[i], t[j]); return s; };
     edge += (pairs(draft.blue) - pairs(draft.red)) / 1.5;
+    edge += composition(draft.blue, draft.red, draft.mode) - composition(draft.red, draft.blue, draft.mode);
     return Math.max(0.2, Math.min(0.8, 0.5 + edge));
   }
 
-  return { hasData, stats: S, mapDelta, counter, synergy, recommend, banSuggestions, draftEdge, mapGames, pickRate };
+  const asEnemies = ids => ids.map(e => ({ name: brawlers.get(e)?.name || '?', cls: cls(e) }));
+  const composition = (team, other, mode) => teamScore(team.map(cls), asEnemies(other), mode);
+
+  // What `team` still needs right now, and a checklist of its draft so far (for the game plan card).
+  function plan(draft, team = 'blue') {
+    const allies = team === 'blue' ? draft.blue : draft.red;
+    const enemies = team === 'blue' ? draft.red : draft.blue;
+    return {
+      needs: teamNeeds(allies.map(cls), asEnemies(enemies), draft.mode).map(({ key, title, why, w }) => ({ key, title, why, w })),
+      report: teamReport(allies.map(cls), asEnemies(enemies), draft.mode),
+    };
+  }
+
+  return { hasData, stats: S, mapDelta, counter, synergy, recommend, banSuggestions, draftEdge, plan, mapGames, pickRate };
 }
 
 // Keep the clearest few reasons: best positives first, then the worst negative.
 function summarize(reasons) {
   const strong = reasons.filter(r => Math.abs(r.v) >= MIN_REASON);
-  const pos = strong.filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 2);
+  const pos = strong.filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 3);
   const neg = strong.filter(r => r.v < 0).sort((a, b) => a.v - b.v).slice(0, 1);
   return [...pos, ...neg];
 }

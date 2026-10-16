@@ -1,4 +1,5 @@
 import { createEngine, nextTurn, pickOrder } from './engine.js';
+import { rangeLabel } from './plan.js';
 
 // ---------- Constants ----------
 
@@ -375,8 +376,7 @@ function turnBanner(step) {
       <button class="text-btn" data-action="skip-bans">${d.bans.length ? 'Done' : 'Skip'}</button></div>`;
   }
   if (step.kind === 'done') {
-    const edge = S.engine.draftEdge(d);
-    return `<div class="turn done"><div class="what"><b>Draft complete</b><span>Estimated win chance ${Math.round(edge * 100)}%. Good luck!</span></div>
+    return `<div class="turn done"><div class="what"><b>Draft complete</b><span>${esc(edgeWords(S.engine.draftEdge(d)))} Good luck!</span></div>
       <button class="text-btn" data-action="again">New draft</button></div>`;
   }
   const mine = step.team === 'blue';
@@ -396,6 +396,7 @@ function reasonChip(r, rec, team) {
   const mode = modeName(S.draft.mode);
   if (r.type === 'map' && estimated) text = r.v >= 0 ? `Good fit for ${mode}` : `Poor fit for ${mode}`;
   else if (r.type === 'map') text = r.v >= 0 ? 'Strong on this map' : 'Weak on this map';
+  else if (r.type === 'need') text = r.label;
   else if (r.type === 'counter') text = r.v >= 0 ? `Beats ${name(r.target)}` : `Struggles vs ${name(r.target)}`;
   else if (r.type === 'synergy') text = r.v >= 0 ? `Good with ${name(r.target)}` : `Awkward with ${name(r.target)}`;
   // For enemy predictions the "risk" is our chance to answer their pick.
@@ -407,7 +408,7 @@ function recCard(r, i, sub, team) {
   const b = byId.get(r.id);
   return `<button class="rec ${i === 0 ? 'best' : ''}" data-pick="${r.id}">
     <span class="pic"><span class="rank">${i + 1}</span>${img(r.id)}</span>
-    <span class="info"><span class="name">${esc(b.name)} <small>${esc(b.cls)}</small></span>
+    <span class="info"><span class="name">${esc(b.name)} <small>${esc(b.cls)} · ${esc(rangeLabel(b.cls))}</small></span>
       <span class="reasons">${r.reasons.map(x => reasonChip(x, r, team)).join('') || '<span class="reason">Solid all-round</span>'}</span></span>
     <span class="score"><b class="${r.score >= 0 ? 'pos' : 'neg'}">${pct(r.score)}</b><span>${sub}</span></span>
   </button>`;
@@ -506,8 +507,48 @@ function draftView() {
       ${bansRow()}
     </div>
     ${turnBanner(step)}
-    ${edge != null ? `<div class="edge"><div class="edge-row"><span>Draft edge</span><b>You ${Math.round(edge * 100)}% · ${Math.round((1 - edge) * 100)}% Them</b></div><div class="edge-bar"><i style="width:${edge * 100}%"></i></div></div>` : ''}
-    ${step.kind === 'done' ? '' : `${quickSearch(step)}<div id="r-draft">${draftBody(step)}</div>`}`;
+    ${edge != null ? edgeMeter(edge) : ''}
+    ${step.kind === 'done' ? teamChecks() : `${planCard(step)}${quickSearch(step)}<div id="r-draft">${draftBody(step)}</div>`}`;
+}
+
+// Drafts move win chance by a few percent; skill decides the rest. Say it in words.
+function edgeWords(edge) {
+  const p = Math.round(edge * 100);
+  const est = S.engine.hasData ? '' : ' (estimate)';
+  if (p >= 58) return `Your draft is clearly better: about ${p}% to win${est}.`;
+  if (p >= 53) return `Your draft has the edge: about ${p}% to win${est}.`;
+  if (p > 47) return `Even draft: about ${p}% — it's down to how you play${est}.`;
+  if (p > 42) return `Their draft has the edge: about ${p}% for you${est}.`;
+  return `Their draft is clearly better: about ${p}% for you${est}.`;
+}
+
+function edgeMeter(edge) {
+  const p = Math.round(edge * 100);
+  const label = p >= 58 ? 'Clearly ahead' : p >= 53 ? 'Ahead' : p > 47 ? 'Even' : p > 42 ? 'Behind' : 'Clearly behind';
+  return `<button class="edge" data-sheet="about" aria-label="What the draft edge means">
+    <div class="edge-row"><span>Draft edge${S.engine.hasData ? '' : ' · estimate'} <span class="q">?</span></span><b>${label} · You ${p}% – ${100 - p}% Them</b></div>
+    <div class="edge-bar"><i style="width:${edge * 100}%"></i></div></button>`;
+}
+
+// What the team on the clock still needs, in plain words.
+function planCard(step) {
+  if (step.kind !== 'pick') return '';
+  const mine = step.team === 'blue';
+  const { needs } = S.engine.plan(S.draft, step.team);
+  const top = needs.slice(0, 3);
+  const body = top.length
+    ? top.map(n => `<li><b>${esc(n.title)}</b><span>${esc(n.why)}</span></li>`).join('')
+    : `<li><b>${mine ? 'Your team is well rounded' : 'Their team is well rounded'}</b><span>${mine ? 'Pick for counters and map strength.' : 'Expect them to pick for counters.'}</span></li>`;
+  return `<div class="plan ${step.team}"><h3>${mine ? 'Game plan' : 'What they need'}</h3><ul>${body}</ul></div>`;
+}
+
+// Final checklist for both teams.
+function teamChecks() {
+  const row = (team, label) => {
+    const items = S.engine.plan(S.draft, team).report;
+    return `<div class="check ${team}"><b>${label}</b><div>${items.map(i => `<span class="${i.ok ? 'ok' : 'miss'}">${i.ok ? '✓' : '✗'} ${esc(i.text)}</span>`).join('')}</div></div>`;
+  };
+  return `<div class="plan"><h3>Team check</h3>${row('blue', 'You')}${row('red', 'Enemy')}</div>`;
 }
 
 function draftBody(step) {
@@ -545,7 +586,11 @@ function sheetView() {
         <li><b>Beats / Struggles vs</b>: head-to-head results against the enemy's picks.</li>
         <li><b>Good with</b>: how well it does next to your teammates.</li>
         <li><b>Can counter</b>: if the enemy still picks after you, the app warns you about an easy answer to your pick.</li>
+        <li><b>Adds frontline / Adds range / Answers Bull…</b>: the team check. The app looks at what your team is missing and what the enemy's picks threaten (tanks, throwers, assassins, snipers, healers), and favours picks that cover it.</li>
       </ul>
+      <h3>Why is the draft edge close to 50%?</h3>
+      <p>Because that's how Brawl Stars works: even a great draft only moves your win chance by a few percent, usually <b>45–60%</b>. Aim and teamwork decide the rest. "Ahead" at 54% means you'd win about 5 more games out of 100 than with an even draft.</p>
+      <p>${S.engine.hasData ? 'The numbers come from real ranked results.' : '<b>Right now the numbers are estimates</b> from brawler types only, so they stay close to 50%. They get sharper once real match stats arrive.'}</p>
       <p>Stats come from the official Brawl Stars API (recent battles of top players) and refresh every day. Brawler and map info is from Brawlify.</p>
       <p style="font-size:12px;color:var(--faint)">Unofficial fan project. Not endorsed by Supercell. This app doesn't touch the game itself; you tap the picks.</p>
       <div class="row"><button class="text-btn" data-sheet="">Close</button></div>`;

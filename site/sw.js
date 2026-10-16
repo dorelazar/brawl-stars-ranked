@@ -1,11 +1,11 @@
-// Offline support. App files: cache first, refreshed in the background.
+// Offline support. App files: network first, cache when offline.
 // Data files: network first so stats are always the latest, cache when offline.
 // Brawler and map images: cache first (they rarely change).
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const APP = `app-${VERSION}`;
 const IMG = 'img-v1';
-const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/engine.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
+const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/engine.js', 'js/plan.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(APP).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -47,13 +47,13 @@ self.addEventListener('fetch', e => {
     return;
   }
 
+  // App files: network first so updates show up on the next open, cache when offline.
   if (url.origin === location.origin) {
     e.respondWith(
-      caches.open(APP).then(async c => {
-        const hit = await c.match(req, { ignoreSearch: true });
-        const net = fetch(req).then(res => { if (res.ok) c.put(req, res.clone()); return res; }).catch(() => null);
-        return hit || (await net) || Response.error();
-      }),
+      fetch(req).then(res => {
+        if (res.ok) { const copy = res.clone(); caches.open(APP).then(c => c.put(req, copy)); }
+        return res;
+      }).catch(() => caches.match(req, { ignoreSearch: true }).then(r => r || Response.error())),
     );
   }
 });
