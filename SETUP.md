@@ -1,11 +1,11 @@
 # Setup: get Brawl Draft on your iPhone (about 20 minutes)
 
 Everything is built. These steps need you because they involve creating accounts.
-After this, the app updates itself every night and your PC can stay off.
+After this, the app updates itself every 4 hours and your PC can stay off.
 
 You'll do 4 things:
 
-1. Put the project on GitHub (free hosting + the nightly job)
+1. Put the project on GitHub (free hosting + the automatic update job)
 2. Get a free Brawl Stars API key (the match data)
 3. Connect the two and run the first update
 4. Add the app to your iPhone home screen
@@ -51,7 +51,7 @@ You'll do 4 things:
    - **Allowed IP addresses**: `45.79.218.79`
 
    That IP belongs to the free RoyaleAPI proxy. GitHub's servers change IP all the time,
-   so the nightly job goes through this proxy, which has a fixed address.
+   so the update job goes through this proxy, which has a fixed address.
 4. Click **Create Key**, open the key, and copy the long **Token**.
 
 ## 3. Connect them and run the first update
@@ -84,5 +84,5 @@ The first day's data is a decent start; it gets better as it builds up to 14 day
 | Action fails with **"API key rejected (403 …)"** | The key's allowed IP must be exactly `45.79.218.79`. Create a new key with that IP and update the `BS_API_KEY` secret. |
 | Action fails at **deploy** with a Pages error | Settings → Pages → Source must be **GitHub Actions**. Then re-run. |
 | App shows **yellow dot** after a green run | Open Actions → the run → "Collect ranked battles" step. If it says `BS_API_KEY is not set`, the secret name is misspelled. |
-| Status shows **red dot / "may be failing"** | The nightly job hasn't succeeded for 2+ days. Check the Actions tab for the error. GitHub also emails you when a scheduled run fails. |
-| GitHub stopped running the nightly job | GitHub pauses schedules in repos with no activity for 60 days. Actions → Daily update → **Enable workflow**. |
+| Status shows **red dot / "may be failing"** | The update job hasn't succeeded for over a day. Check the Actions tab for the error. GitHub also emails you when a scheduled run fails. |
+| GitHub stopped running the update job | GitHub pauses schedules in repos with no activity for 60 days. Actions → Daily update → **Enable workflow**. |

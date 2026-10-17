@@ -88,3 +88,56 @@ test('ban suggestions and draft edge stay in sane ranges', () => {
   assert.ok(edge > 0.5 && edge <= 0.8, `edge ${edge}`);
   assert.equal(e.draftEdge(draft()), 0.5);
 });
+
+// A handful of games is luck, not a counter: it must not outweigh map strength.
+test('a few lucky games do not create a big counter', () => {
+  const agg = emptyAgg();
+  let n = 0;
+  const play = (teamA, teamB, type = 'soloRanked') => {
+    const time = `s${n++}`;
+    addBattle(agg, normalizeBattle(battle({ time, type, teamA, teamB }), `#A0${time}`));
+  };
+  for (let i = 0; i < 12; i++) play([2, 6, 7], [3, 1, 8]); // Colt beat Bull 12 times out of 12
+  const e = createEngine(meta, buildStats([agg]));
+  assert.ok(e.counter(2, 3) > 0, 'the direction is still picked up');
+  assert.ok(e.counter(2, 3) < 0.02, `12 games should move the counter only a little, got ${e.counter(2, 3)}`);
+});
+
+test('non-ranked stomps count far less than ranked games', () => {
+  const ranked = emptyAgg(), casual = emptyAgg();
+  let n = 0;
+  const play = (agg, type) => {
+    const time = `c${n++}`;
+    addBattle(agg, normalizeBattle(battle({ time, type, teamA: [5, 6, 7], teamB: [1, 2, 3] }), `#A0${time}`));
+  };
+  for (let i = 0; i < 300; i++) play(ranked, 'soloRanked');
+  for (let i = 0; i < 300; i++) play(casual, 'ranked'); // trophy games: type "ranked" in the API is not Ranked mode
+  const fromRanked = createEngine(meta, buildStats([ranked])).mapDelta(5, 100, 'gemGrab');
+  const fromCasual = createEngine(meta, buildStats([casual])).mapDelta(5, 100, 'gemGrab');
+  assert.ok(fromRanked > 3 * fromCasual, `ranked ${fromRanked} vs casual ${fromCasual}`);
+});
+
+test('likely enemy picks lead with what is popular on the map', () => {
+  const agg = emptyAgg();
+  let n = 0;
+  for (let i = 0; i < 400; i++) {
+    const time = `p${n++}`;
+    // Gene and Poco show up in every game; nobody plays Shelly.
+    addBattle(agg, normalizeBattle(battle({ time, teamA: [8, 6, i % 2 ? 2 : 3], teamB: [4, 5, 7], ownerWon: i % 2 === 0 }), `#A0${time}`));
+  }
+  const e = createEngine(meta, buildStats([agg]));
+  const likely = e.likelyPicks(draft(), 'red').map(r => r.id);
+  assert.equal(likely.length, 8);
+  assert.ok(likely.indexOf(8) < likely.indexOf(1) && likely.indexOf(6) < likely.indexOf(1));
+  const taken = e.likelyPicks(draft({ blue: [8] }), 'red').map(r => r.id);
+  assert.ok(!taken.includes(8), 'picked brawlers are never predicted');
+});
+
+test('recommendations are cached per draft state but follow every change', () => {
+  const e = createEngine(meta, statsWhere(4));
+  const a = e.recommend(draft());
+  assert.equal(e.recommend(draft()), a, 'same state, same result object');
+  const b = e.recommend(draft({ red: [5], firstTeam: 'red' }));
+  assert.notEqual(a, b);
+  assert.ok(!b.some(r => r.id === 5));
+});

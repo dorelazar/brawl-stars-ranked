@@ -81,3 +81,17 @@ test('trimMeta keeps released brawlers and 3v3 maps only', () => {
   assert.deepEqual(meta.maps.map(m => m.id), [10]);
   assert.deepEqual(meta.modes.map(m => m.id), ['gemGrab']);
 });
+
+test('ranked map list follows the current season: maps that left the pool drop off', () => {
+  const day = mapId => {
+    const agg = emptyAgg();
+    for (let i = 0; i < 25; i++) {
+      addBattle(agg, normalizeBattle(battle({ time: `${mapId}-${i}`, mapId, teamA: [1, 2, 3], teamB: [4, 5, 6] }), `#A0${mapId}-${i}`));
+    }
+    return agg;
+  };
+  // Map 100 was ranked last season (old days), map 200 is ranked now (last 3 days).
+  const stats = buildStats([day(100), day(100), day(100), day(200), day(200), day(200)]);
+  assert.deepEqual(stats.rankedMaps, [200]);
+  assert.ok(stats.m[100], 'old map stats are still kept for its win rates');
+});

@@ -13,15 +13,22 @@ const STATE = process.argv[2] || join(ROOT, 'state');
 const OUT = join(ROOT, 'site', 'data', 'stats.json');
 export const WINDOW_DAYS = 14;
 const MIN_RANKED_GAMES_FOR_POOL = 20;
+const POOL_DAYS = 3;
 
 export function buildStats(dailies, now = new Date()) {
   const total = emptyAgg();
   for (const d of dailies) mergeAgg(total, d);
 
-  const rankedMaps = Object.entries(total.m)
+  // The ranked map pool changes with each season: judge it on the last few days only,
+  // so maps that left the pool drop off the app's list right away.
+  const recent = emptyAgg();
+  for (const d of dailies.slice(-POOL_DAYS)) mergeAgg(recent, d);
+  const poolFrom = agg => Object.entries(agg.m)
     .filter(([, m]) => m.n[0] >= MIN_RANKED_GAMES_FOR_POOL)
     .sort((a, b) => b[1].n[0] - a[1].n[0])
     .map(([id]) => Number(id));
+  const recentPool = poolFrom(recent);
+  const rankedMaps = recentPool.length ? recentPool : poolFrom(total);
 
   return {
     generatedAt: now.toISOString(),
