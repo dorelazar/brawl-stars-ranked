@@ -1,8 +1,9 @@
-// Offline support. App files: network first, cache when offline.
-// Data files: network first so stats are always the latest, cache when offline.
+// Offline support and instant start.
+// App files and data: served from cache right away, refreshed in the background
+// (the draft timer doesn't wait for a slow connection; new versions show on the next open).
 // Brawler and map images: cache first (they rarely change).
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 const APP = `app-${VERSION}`;
 const IMG = 'img-v1';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/engine.js', 'js/plan.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
@@ -24,16 +25,6 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  if (url.origin === location.origin && url.pathname.includes('/data/')) {
-    e.respondWith(
-      fetch(req).then(res => {
-        if (res.ok) { const copy = res.clone(); caches.open(APP).then(c => c.put(req, copy)); }
-        return res;
-      }).catch(() => caches.match(req, { ignoreSearch: true }).then(r => r || Response.error())),
-    );
-    return;
-  }
-
   if (url.hostname.endsWith('brawlify.com') || url.hostname.endsWith('gstatic.com') || url.hostname === 'fonts.googleapis.com') {
     e.respondWith(
       caches.open(IMG).then(async c => {
@@ -47,13 +38,33 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // App files: network first so updates show up on the next open, cache when offline.
-  if (url.origin === location.origin) {
-    e.respondWith(
-      fetch(req).then(res => {
-        if (res.ok) { const copy = res.clone(); caches.open(APP).then(c => c.put(req, copy)); }
+  // Data: fresh stats when the connection is fine, the cached copy if it takes over 2.5 s.
+  if (url.origin === location.origin && url.pathname.includes('/data/')) {
+    e.respondWith(caches.open(APP).then(async c => {
+      const fresh = fetch(req).then(res => {
+        if (res.ok) c.put(req, res.clone());
         return res;
-      }).catch(() => caches.match(req, { ignoreSearch: true }).then(r => r || Response.error())),
-    );
+      });
+      e.waitUntil(fresh.catch(() => {}));
+      const slow = new Promise(r => setTimeout(r, 2500)).then(() => c.match(req, { ignoreSearch: true }));
+      const hit = await Promise.race([fresh.catch(() => null), slow]);
+      return hit || (await c.match(req, { ignoreSearch: true })) || fresh.catch(() => Response.error());
+    }));
+    return;
+  }
+
+  if (url.origin === location.origin) {
+    e.respondWith(caches.open(APP).then(async c => {
+      const hit = await c.match(req, { ignoreSearch: true });
+      const fresh = fetch(req).then(res => {
+        if (res.ok) c.put(req, res.clone());
+        return res;
+      });
+      if (hit) {
+        e.waitUntil(fresh.catch(() => {}));
+        return hit;
+      }
+      return fresh.catch(() => Response.error());
+    }));
   }
 });

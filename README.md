@@ -21,15 +21,27 @@ site/ (the app, no build step)
   app.js     → screens: map picker, live draft board
 ```
 
+Using it during a draft (every step is one tap):
+
+1. **Map**: pick the mode, then one of its ranked maps.
+2. **Bans**: the strongest brawlers on the map are shown as tiles; tap the banned ones, or skip.
+3. **Your turn**: the best picks for that exact moment, with reasons. Tap one to lock it in.
+4. **Their turn**: their 18 most likely picks as tiles (about 2 of every 3 real picks are in there). Tap what they took.
+
+Anything else is two letters + Enter in the search box. Every tap can be undone.
+
 Scoring, per candidate brawler (all values are win-rate changes):
 
-- **Map**: win rate on this map in ranked, shrunk toward the mode and overall win rate when the sample is small
+- **Map**: win rate on this map in ranked, shrunk toward the brawler's mode and overall win rate
 - **Counters**: head-to-head results against each enemy pick
 - **Synergy**: results next to each teammate already picked
-- **Risk**: if the enemy still picks after you, the best answer they could pick is subtracted
+- **Team fit**: what the team is missing (frontline, range, control) and answers to the enemy's picks
+- **Risk**: if the enemy still picks after you, their best realistic counter to this brawler is subtracted
 
-Small samples lean on class-based estimates (e.g. marksmen in Knockout), so the app is usable from day one
-and becomes fully data-driven as battles accumulate. Ranked games count most; other 3v3 games fill gaps.
+Every number is shrunk toward the level above it with a prior strength calibrated on live ranked data
+(counters and synergies really move win rates by about 2%, so a dozen lucky games can't create a "+20% counter").
+Non-ranked games barely predict ranked results (they're mostly top players beating weaker lobbies), so they count
+at a tenth of a ranked game. With no data at all, class-vs-mode estimates keep the app usable.
 
 Collected counters live on the `data` branch as a single squashed commit, so the repo doesn't grow.
 

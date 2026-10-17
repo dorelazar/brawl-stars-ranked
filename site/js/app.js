@@ -5,7 +5,9 @@ import { rangeLabel } from './plan.js';
 
 const RANKED_MODES = ['gemGrab', 'brawlBall', 'heist', 'bounty', 'hotZone', 'knockout'];
 const CLASSES = ['Tank', 'Assassin', 'Damage Dealer', 'Marksman', 'Controller', 'Artillery', 'Support'];
+const CLASS_SHORT = { 'Damage Dealer': 'Damage', Artillery: 'Thrower' };
 const STORE = 'brawl-draft:v1';
+const QUICK_TILES = 18; // likely picks shown as one-tap tiles: covers ~2 of every 3 real picks
 const ICON = {
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg>',
@@ -24,6 +26,7 @@ const S = {
   view: 'maps',
   mode: 'gemGrab',
   mapQuery: '',
+  allMaps: false,    // show non-ranked maps of the mode too
   draft: null,
   history: [],
   gridQuery: '',
@@ -45,7 +48,7 @@ function load() {
     const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
     if (saved.draft) S.draft = saved.draft;
     if (saved.view === 'draft' && saved.draft) S.view = 'draft';
-    if (saved.mode) S.mode = saved.mode;
+    if (RANKED_MODES.includes(saved.mode)) S.mode = saved.mode;
     if (Array.isArray(saved.mine)) S.mine = new Set(saved.mine);
     if (Array.isArray(saved.recent)) S.recent = saved.recent;
   } catch { /* private mode or corrupt storage: start fresh */ }
@@ -167,8 +170,10 @@ function newDraft(mapId) {
   S.draft = { mapId, mode: map.mode, bans: [], blue: [], red: [], firstTeam, bansDone: false };
   S.history = [];
   S.gridQuery = '';
+  S.gridClass = 'all';
   S.showAll = false;
   S.recent = [mapId, ...S.recent.filter(id => id !== mapId)].slice(0, 6);
+  if (RANKED_MODES.includes(map.mode)) S.mode = map.mode;
   S.view = 'draft';
   viewChangedAt = Date.now();
   save();
@@ -180,7 +185,15 @@ function newDraft(mapId) {
 // which would pop up the iPhone keyboard. Ignore focus that arrives right after a screen change.
 let viewChangedAt = 0;
 document.addEventListener('focusin', e => {
-  if (e.target.tagName === 'INPUT' && Date.now() - viewChangedAt < 500) e.target.blur();
+  if (e.target.tagName === 'INPUT' && Date.now() - viewChangedAt < 500) { e.target.blur(); return; }
+  // The keyboard covers the bottom half of the phone: lift the brawler search up under the header
+  // so its results show above the keyboard.
+  if (e.target.id === 'gridq') {
+    setTimeout(() => {
+      const header = document.querySelector('.top')?.offsetHeight || 0;
+      window.scrollTo({ top: e.target.getBoundingClientRect().top + window.scrollY - header - 8 });
+    }, 250);
+  }
 });
 
 function snapshot() {
@@ -221,19 +234,19 @@ function choose(id) {
   S.gridQuery = '';
   S.showAll = false;
   save();
+  // Close the keyboard and jump back to the top: the next suggestions are right there.
+  document.activeElement?.blur?.();
   render();
-  const after = currentStep();
+  window.scrollTo(0, 0);
   const label = step.kind === 'ban' ? 'Banned' : step.team === 'blue' ? 'You picked' : 'Enemy picked';
   toast(`${label} ${name(id)}`, { label: 'Undo', run: undo });
-  if (after?.kind === 'pick' && after.team !== step.team) {
-    document.querySelector('.turn')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }
 }
 
 function removeFrom(list, id) {
   const d = S.draft;
   snapshot();
   d[list] = d[list].filter(x => x !== id);
+  if (list === 'bans' && !d.blue.length && !d.red.length) d.bansDone = false;
   save();
   render();
   toast(`Removed ${name(id)}`, { label: 'Undo', run: undo });
@@ -271,9 +284,9 @@ function statusBar() {
     return `<button class="status est" data-sheet="about"><span class="dot"></span>
       <span><b>Estimated picks</b> · live match stats aren't connected yet</span><span class="chev">›</span></button>`;
   }
-  const old = Date.now() - Date.parse(st.generatedAt) > 48 * 36e5;
+  const old = Date.now() - Date.parse(st.generatedAt) > 24 * 36e5;
   return `<button class="status ${old ? 'old' : ''}" data-sheet="about"><span class="dot"></span>
-    <span><b>${st.battles.ranked.toLocaleString()} ranked games</b> · updated ${ago(st.generatedAt)}${old ? ' · daily update may be failing' : ''}</span><span class="chev">›</span></button>`;
+    <span><b>${st.battles.ranked.toLocaleString()} ranked games</b> · updated ${ago(st.generatedAt)}${old ? ' · updates may be failing' : ''}</span><span class="chev">›</span></button>`;
 }
 
 function mapCard(m, badge) {
@@ -286,13 +299,18 @@ function mapCard(m, badge) {
 }
 
 function mapsView() {
-  const modes = [...RANKED_MODES.filter(id => modeById.has(id)), 'other'];
-  const chips = modes.map(id => {
+  const modes = RANKED_MODES.filter(id => modeById.has(id)).map(id => {
     const m = modeById.get(id);
-    const color = m?.color || '#ffc93c';
-    const label = id === 'other' ? 'Other modes' : m.name;
-    return `<button class="chip ${S.mode === id ? 'on' : ''}" style="--chip-color:${esc(color)}" data-mode="${id}">${id === 'other' ? '' : modeIcon(id)}${esc(label)}</button>`;
+    return `<button class="mode ${S.mode === id ? 'on' : ''}" style="--c:${esc(m.color || '#ffc93c')}" data-mode="${id}" aria-pressed="${S.mode === id}">
+      ${modeIcon(id)}<span>${esc(m.name)}</span></button>`;
   }).join('');
+  const recent = S.recent.map(id => mapById.get(id)).filter(m => m && !m.hidden).slice(0, 4);
+  const recentRow = recent.length
+    ? `<div class="recent"><span>Recent</span>${recent.map(m => `<button class="chip small" data-map="${m.id}">${modeIcon(m.mode)}${esc(m.name)}</button>`).join('')}</div>`
+    : '';
+  const resume = S.draft && (S.draft.blue.length || S.draft.red.length || S.draft.bans.length) && currentStep()?.kind !== 'done'
+    ? `<button class="resume" data-action="resume"><span>Continue draft</span><b>${esc(mapById.get(S.draft.mapId)?.name)}</b><span class="chev">›</span></button>`
+    : '';
 
   return `
     <header class="top">
@@ -301,8 +319,11 @@ function mapsView() {
       <button class="icon-btn" data-sheet="about" aria-label="About and data">${ICON.info}</button>
     </header>
     ${statusBar()}
-    <div class="search">${ICON.search}<input id="mapq" type="search" placeholder="Search maps" value="${esc(S.mapQuery)}" autocomplete="off" enterkeyhint="search">${clearBtn('map', S.mapQuery)}</div>
-    <div class="chips">${chips}</div>
+    ${resume}
+    <p class="lead">Which map is your ranked game on?</p>
+    <div class="modes" role="group" aria-label="Game mode">${modes}</div>
+    ${recentRow}
+    <div class="search">${ICON.search}<input id="mapq" type="search" placeholder="Or search any map" value="${esc(S.mapQuery)}" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search">${clearBtn('map', S.mapQuery)}</div>
     <div id="r-map">${mapsBody()}</div>`;
 }
 
@@ -311,29 +332,26 @@ function mapsView() {
 function mapsBody() {
   const ranked = new Set(S.stats?.rankedMaps || []);
   const live = liveMapIds();
-  const badge = m => ranked.has(m.id) ? { cls: '', text: 'Ranked' } : live.has(m.id) ? { cls: 'live', text: 'Live' } : null;
+  const badge = m => ranked.has(m.id) ? null : live.has(m.id) ? { cls: 'live', text: 'Live' } : null;
   const order = m => (ranked.has(m.id) ? 0 : live.has(m.id) ? 1 : 2);
   const sortMaps = list => list.sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name));
-  const otherModes = S.meta.modes.filter(m => !RANKED_MODES.includes(m.id)).map(m => m.id);
+  const visible = m => (m.active && !m.hidden) || ranked.has(m.id);
 
   const q = S.mapQuery.trim().toLowerCase();
-  let body;
   if (q) {
-    const found = sortMaps([...mapById.values()].filter(m => m.name.toLowerCase().includes(q) && ((m.active && !m.hidden) || ranked.has(m.id))));
-    body = `<div class="section-title"><h2>Search</h2><span>${found.length} map${found.length === 1 ? '' : 's'}</span></div>` +
-      (found.length ? `<div class="maps">${found.slice(0, 60).map(m => mapCard(m, badge(m))).join('')}</div>` : `<div class="empty">No map called “${esc(S.mapQuery)}”.</div>`);
-  } else {
-    const inMode = id => (S.mode === 'other' ? otherModes.includes(id) : id === S.mode);
-    const list = sortMaps([...mapById.values()].filter(m => inMode(m.mode) && ((m.active && !m.hidden) || ranked.has(m.id))));
-    const recent = S.recent.map(id => mapById.get(id)).filter(Boolean);
-    body = '';
-    if (recent.length) {
-      body += `<div class="section-title"><h2>Recent</h2></div><div class="maps">${recent.slice(0, 3).map(m => mapCard(m, badge(m))).join('')}</div>`;
-    }
-    const title = S.mode === 'other' ? 'Other modes' : modeName(S.mode);
-    const nRanked = list.filter(m => ranked.has(m.id)).length;
-    body += `<div class="section-title"><h2>${esc(title)}</h2><span>${nRanked ? `${nRanked} in ranked now · ` : ''}${list.length} maps</span></div>`;
-    body += list.length ? `<div class="maps">${list.map(m => mapCard(m, badge(m))).join('')}</div>` : `<div class="empty">No maps for this mode right now.</div>`;
+    const found = sortMaps([...mapById.values()].filter(m => visible(m) && m.name.toLowerCase().includes(q)));
+    return `<div class="section-title"><h2>Search</h2><span>${found.length} map${found.length === 1 ? '' : 's'}</span></div>` +
+      (found.length ? `<div class="maps">${found.slice(0, 60).map(m => mapCard(m, ranked.has(m.id) ? { cls: '', text: 'Ranked' } : badge(m))).join('')}</div>` : `<div class="empty">No map called “${esc(S.mapQuery)}”.</div>`);
+  }
+  const all = sortMaps([...mapById.values()].filter(m => m.mode === S.mode && visible(m)));
+  const inRanked = all.filter(m => ranked.has(m.id));
+  // Before any ranked data exists, every map of the mode is a candidate.
+  const shown = inRanked.length && !S.allMaps ? inRanked : all;
+  const title = inRanked.length && !S.allMaps ? 'Ranked maps' : `All ${modeName(S.mode)} maps`;
+  let body = `<div class="section-title"><h2>${esc(title)}</h2><span>tap your map</span></div>`;
+  body += shown.length ? `<div class="maps">${shown.map(m => mapCard(m, badge(m))).join('')}</div>` : `<div class="empty">No maps for this mode right now.</div>`;
+  if (inRanked.length && all.length > inRanked.length) {
+    body += `<button class="more" data-action="all-maps">${S.allMaps ? 'Only ranked maps' : `Not here? Show all ${all.length} maps`}</button>`;
   }
   return body;
 }
@@ -349,10 +367,9 @@ function slotsFor(team) {
   return positions.map((pos, i) => {
     const id = picks[i];
     if (id != null) {
-      return `<button class="slot filled" data-remove="${team}" data-id="${id}" aria-label="Remove ${esc(name(id))}">
-        ${img(id)}<span class="x">×</span><span class="slot-name">${esc(name(id))}</span></button>`;
+      return `<button class="slot filled" data-remove="${team}" data-id="${id}" aria-label="Remove ${esc(name(id))}">${img(id)}</button>`;
     }
-    const isNext = step?.kind === 'pick' && step.team === team && i === picks.length;
+    const isNext = step?.kind === 'pick' && step.team === team && i < picks.length + step.picksNow;
     return `<div class="slot ${isNext ? 'next' : ''}"><span>${pos}</span></div>`;
   }).join('');
 }
@@ -366,162 +383,176 @@ function bansRow() {
     if (id != null) cells.push(`<button class="ban filled" data-remove="bans" data-id="${id}" aria-label="Unban ${esc(name(id))}">${img(id)}</button>`);
     else cells.push(`<div class="ban ${step?.kind === 'ban' && i === d.bans.length ? 'next' : ''}"></div>`);
   }
-  return `<div class="bans"><div class="team-label">Bans</div><div class="ban-slots">${cells.join('')}</div></div>`;
+  return `<div class="bans"><span>Bans</span><div class="ban-slots">${cells.join('')}</div></div>`;
+}
+
+function board() {
+  return `<div class="board">
+    <div class="side blue"><b>You</b><div class="slots">${slotsFor('blue')}</div></div>
+    <div class="vs">VS</div>
+    <div class="side red"><b>Enemy</b><div class="slots">${slotsFor('red')}</div></div>
+    ${bansRow()}
+  </div>`;
+}
+
+// Who picks first decides the whole order, so it's asked right in the banner until the first pick.
+function firstPickToggle() {
+  const d = S.draft;
+  return `<div class="first-pick"><span>First pick:</span>
+    <div class="seg" role="group" aria-label="Who picks first">
+      <button class="${d.firstTeam === 'blue' ? 'on' : ''}" data-first="blue" aria-pressed="${d.firstTeam === 'blue'}">Us</button>
+      <button class="${d.firstTeam === 'red' ? 'on' : ''}" data-first="red" aria-pressed="${d.firstTeam === 'red'}">Them</button>
+    </div></div>`;
 }
 
 function turnBanner(step) {
   const d = S.draft;
+  const started = d.blue.length + d.red.length > 0;
   if (step.kind === 'ban') {
-    return `<div class="turn"><div class="what"><b>Bans · ${d.bans.length}/6</b><span>Tap each banned brawler, or skip.</span></div>
-      <button class="text-btn" data-action="skip-bans">${d.bans.length ? 'Done' : 'Skip'}</button></div>`;
+    return `<div class="turn"><div class="what"><b>Bans · ${d.bans.length}/6</b><span>Tap the banned brawlers, or skip.</span>${firstPickToggle()}</div>
+      <button class="go-btn" data-action="skip-bans">${d.bans.length ? 'Picks' : 'Skip'} ›</button></div>`;
   }
   if (step.kind === 'done') {
-    return `<div class="turn done"><div class="what"><b>Draft complete</b><span>${esc(edgeWords(S.engine.draftEdge(d)))} Good luck!</span></div>
-      <button class="text-btn" data-action="again">New draft</button></div>`;
+    return `<div class="turn done"><div class="what"><b>Draft complete</b><span>Good luck! Here's how the two teams compare.</span></div></div>`;
   }
   const mine = step.team === 'blue';
-  const left = step.picksNow === 2 ? '2 picks' : '1 pick';
-  const title = mine ? `Your turn · ${left}` : `Enemy's turn · ${left}`;
+  const n = step.picksNow === 2 ? '2 picks' : '1 pick';
+  const title = mine ? `Your turn · ${n}` : `Enemy's turn · ${n}`;
   const sub = mine
-    ? (step.opponentPicksAfter === 0 ? 'Last pick — counter freely, nobody can answer.' : `They get ${step.opponentPicksAfter} more pick${step.opponentPicksAfter > 1 ? 's' : ''} after this, so avoid easy counters.`)
-    : 'Tap what they lock in.';
-  return `<div class="turn ${step.team}"><div class="what"><b>${title}</b><span>${sub}</span></div></div>`;
+    ? (step.opponentPicksAfter === 0 ? 'Last pick: counter freely, nobody can answer.' : `They pick ${step.opponentPicksAfter} more after you, so avoid easy counters.`)
+    : `Tap what they lock in${step.picksNow === 2 ? ' (both picks)' : ''}.`;
+  return `<div class="turn ${step.team}"><div class="what"><b>${title}</b><span>${sub}</span>${started ? '' : firstPickToggle()}</div></div>`;
 }
 
 function reasonChip(r, rec, team) {
   const cls = r.v >= 0 ? 'pos' : 'neg';
   let text;
   // Without enough real games the map number is only a class-vs-mode estimate: say so.
-  const estimated = (rec?.games?.all ?? 0) < 30;
+  const estimated = (rec?.games?.ranked ?? 0) < 30;
   const mode = modeName(S.draft.mode);
-  if (r.type === 'map' && estimated) text = r.v >= 0 ? `Good fit for ${mode}` : `Poor fit for ${mode}`;
+  if (r.type === 'map' && estimated) text = r.v >= 0 ? `Good in ${mode}` : `Weak in ${mode}`;
   else if (r.type === 'map') text = r.v >= 0 ? 'Strong on this map' : 'Weak on this map';
   else if (r.type === 'need') text = r.label;
-  else if (r.type === 'counter') text = r.v >= 0 ? `Beats ${name(r.target)}` : `Struggles vs ${name(r.target)}`;
+  else if (r.type === 'counter') text = r.v >= 0 ? `Beats ${name(r.target)}` : `Weak vs ${name(r.target)}`;
   else if (r.type === 'synergy') text = r.v >= 0 ? `Good with ${name(r.target)}` : `Awkward with ${name(r.target)}`;
   // For enemy predictions the "risk" is our chance to answer their pick.
-  else if (r.type === 'risk') text = team === 'red' ? `You can answer with ${name(r.target)}` : `${name(r.target)} can counter`;
-  return `<span class="reason ${cls}">${esc(text)} ${pct(r.v)}</span>`;
+  else if (r.type === 'risk') text = team === 'red' ? `You can answer with ${name(r.target)}` : `${name(r.target)} counters it`;
+  return `<span class="reason ${cls}" title="${pct(r.v)}">${esc(text)}</span>`;
 }
 
-function recCard(r, i, sub, team) {
+function recCard(r, i) {
   const b = byId.get(r.id);
   return `<button class="rec ${i === 0 ? 'best' : ''}" data-pick="${r.id}">
     <span class="pic"><span class="rank">${i + 1}</span>${img(r.id)}</span>
-    <span class="info"><span class="name">${esc(b.name)} <small>${esc(b.cls)} · ${esc(rangeLabel(b.cls))}</small></span>
-      <span class="reasons">${r.reasons.map(x => reasonChip(x, r, team)).join('') || '<span class="reason">Solid all-round</span>'}</span></span>
-    <span class="score"><b class="${r.score >= 0 ? 'pos' : 'neg'}">${pct(r.score)}</b><span>${sub}</span></span>
+    <span class="info"><span class="name">${esc(b.name)} <small>${esc(CLASS_SHORT[b.cls] || b.cls)} · ${esc(rangeLabel(b.cls))}</small></span>
+      <span class="reasons">${r.reasons.map(x => reasonChip(x, r, 'blue')).join('') || '<span class="reason">Solid all-round</span>'}</span></span>
+    <span class="score"><b class="${r.score >= 0 ? 'pos' : 'neg'}">${pct(r.score)}</b><span>edge</span></span>
   </button>`;
 }
 
-function recommendations(step) {
-  const d = S.draft;
-  if (step.kind === 'done') return '';
-  let list, title, hint;
-  if (step.kind === 'ban') {
-    list = S.engine.banSuggestions(d);
-    title = 'Worth banning';
-    hint = 'strongest here';
-  } else if (step.team === 'blue') {
-    list = S.engine.recommend(d, 'blue');
-    if (S.mine) list = list.filter(r => S.mine.has(r.id));
-    title = 'Best picks for you';
-    hint = S.mine ? `from your ${S.mine.size} brawlers` : 'tap to lock in';
-  } else {
-    list = S.engine.recommend(d, 'red');
-    title = 'They might pick';
-    hint = 'tap their pick';
-  }
-  const n = S.showAll ? 12 : 5;
-  const sub = step.kind === 'ban' ? 'map edge' : step.team === 'red' ? 'their edge' : 'your edge';
-  const cards = list.slice(0, n).map((r, i) => recCard(r, i, sub, step.team)).join('');
-  const note = S.engine.hasData ? '' : `<button class="status est" data-sheet="about" style="margin:0 0 10px"><span class="dot"></span>
-    <span>Rough estimates by brawler type. Real ranked results switch on once live stats are connected.</span><span class="chev">›</span></button>`;
-  return `<div class="section-title"><h2>${title}</h2><span>${hint}</span></div>${note}
-    <div class="recs">${cards || `<div class="empty">${S.mine && step.team === 'blue' ? 'None of your brawlers are left. <button class="text-btn" data-sheet="mine">Edit my brawlers</button>' : 'No brawlers left to suggest.'}</div>`}</div>
-    ${list.length > 5 ? `<button class="more" data-action="more">${S.showAll ? 'Show fewer' : 'Show more'}</button>` : ''}`;
+// One brawler button. rank: small number badge (best picks / bans); tag: small corner value.
+function tile(id, { off = false, rank = 0, tag = '' } = {}) {
+  const b = byId.get(id);
+  return `<button class="tile ${off ? 'off' : ''} ${rank && rank <= 3 ? 'hot' : ''}" data-pick="${id}" ${off ? 'disabled' : ''} aria-label="${esc(b.name)}">
+    ${img(id)}<span>${esc(b.name)}</span>${rank ? `<i class="rk">${rank}</i>` : ''}${tag}</button>`;
 }
 
-function tilesHtml(step, list) {
+// Your turn: the best picks first, with the reasons.
+function yourPicks() {
+  const d = S.draft;
+  let list = S.engine.recommend(d, 'blue');
+  if (S.mine) list = list.filter(r => S.mine.has(r.id));
+  const n = S.showAll ? 10 : 4;
+  const cards = list.slice(0, n).map(recCard).join('');
+  const note = S.engine.hasData ? '' : `<p class="note">Rough estimates by brawler type until live stats are connected.</p>`;
+  return `<div class="section-title"><h2>Best picks for you</h2><span>${S.mine ? `from your ${S.mine.size} brawlers · ` : ''}tap to lock in</span></div>${note}
+    <div class="recs">${cards || `<div class="empty">None of your brawlers are left. <button class="text-btn" data-sheet="mine">Edit my brawlers</button></div>`}</div>
+    ${list.length > 4 ? `<button class="more" data-action="more">${S.showAll ? 'Show fewer' : 'Show more picks'}</button>` : ''}
+    ${planCard()}`;
+}
+
+// Enemy turn / bans: the most likely brawlers as one-tap tiles.
+function quickTiles(step) {
+  const d = S.draft;
+  if (step.kind === 'ban') {
+    const list = S.engine.banSuggestions(d).slice(0, QUICK_TILES);
+    const best = list[0];
+    const tiles = list.map((r, i) => tile(r.id, {
+      rank: i < 3 ? i + 1 : 0,
+      tag: `<em class="tag ${r.map >= 0 ? 'pos' : 'neg'}">${r.map >= 0 ? '+' : '−'}${Math.abs(r.map * 100).toFixed(0)}%</em>`,
+    })).join('');
+    return `<div class="section-title"><h2>Strongest here</h2><span>ban one of the top 3</span></div>
+      ${best ? `<p class="note">Best ban: <b>${esc(name(best.id))}</b>, ${pct(best.map)} win rate on this map.</p>` : ''}
+      <div class="grid quick">${tiles}</div>`;
+  }
+  const list = S.engine.likelyPicks(d, 'red').slice(0, QUICK_TILES);
+  return `<div class="section-title"><h2>Their likely picks</h2><span>tap what they lock in</span></div>
+    <div class="grid quick">${list.map(r => tile(r.id)).join('')}</div>`;
+}
+
+// Every brawler, A–Z, for anything the shortcuts above don't cover.
+function brawlerGrid(step) {
   const d = S.draft;
   const taken = new Set([...d.bans, ...d.blue, ...d.red]);
-  const scores = new Map();
-  if (step.kind === 'pick') for (const r of S.engine.recommend(d, step.team)) scores.set(r.id, r.score);
-  return list.map(b => {
-    const off = taken.has(b.id);
-    const s = scores.get(b.id);
-    const tag = s != null && !off ? `<span class="tag ${s >= 0 ? 'pos' : 'neg'}">${s >= 0 ? '+' : '−'}${Math.abs(s * 100).toFixed(0)}</span>` : '';
-    return `<button class="tile ${off ? 'off' : ''}" data-pick="${b.id}" ${off ? 'disabled' : ''}>${img(b.id)}<span>${esc(b.name)}</span>${tag}</button>`;
-  }).join('');
+  const rank = new Map();
+  if (step.kind === 'pick' && step.team === 'blue') S.engine.recommend(d, 'blue').slice(0, 10).forEach((r, i) => rank.set(r.id, i + 1));
+  const list = S.meta.brawlers.filter(b => S.gridClass === 'all' || b.cls === S.gridClass);
+  const classChips = ['all', ...CLASSES].map(c => `<button class="chip small ${S.gridClass === c ? 'on' : ''}" data-class="${esc(c)}">${c === 'all' ? 'All' : esc(CLASS_SHORT[c] || c)}</button>`).join('');
+  const title = step.kind === 'ban' ? 'All brawlers' : step.team === 'blue' ? 'Picking someone else?' : 'All brawlers';
+  return `<div class="section-title"><h2>${title}</h2><span>A–Z</span></div>
+    <div class="chips">${classChips}</div>
+    <div class="grid">${list.map(b => tile(b.id, { off: taken.has(b.id), rank: rank.get(b.id) || 0 })).join('') || '<div class="empty" style="grid-column:1/-1">No brawler matches.</div>'}</div>`;
 }
-
-const verbFor = step => step.kind === 'ban' ? 'ban' : step.team === 'blue' ? 'pick' : 'mark their pick';
 
 // Name search sits right under the turn banner: type 2 letters + Enter during the draft timer.
 function quickSearch(step) {
-  const placeholder = step.kind === 'ban' ? 'Find a brawler to ban' : step.team === 'blue' ? 'Find your pick' : 'Find their pick';
-  return `<div class="search quick">${ICON.search}<input id="gridq" type="search" placeholder="${placeholder} — type 2 letters" value="${esc(S.gridQuery)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done">${clearBtn('grid', S.gridQuery)}</div>`;
+  const placeholder = step.kind === 'ban' ? 'Search a ban' : step.team === 'blue' ? 'Search your pick' : 'Search their pick';
+  return `<div class="search quick">${ICON.search}<input id="gridq" type="search" placeholder="${placeholder} (2 letters + Enter)" value="${esc(S.gridQuery)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done">${clearBtn('grid', S.gridQuery)}</div>`;
 }
 
 function searchResults(step) {
-  const q = S.gridQuery.trim().toLowerCase();
-  const starts = S.meta.brawlers.filter(b => b.name.toLowerCase().startsWith(q));
-  const contains = S.meta.brawlers.filter(b => !b.name.toLowerCase().startsWith(q) && b.name.toLowerCase().includes(q));
-  const tiles = tilesHtml(step, [...starts, ...contains]);
-  return `<div class="section-title"><h2>Matches</h2><span>tap to ${verbFor(step)} · Enter picks the first</span></div>
-    <div class="grid">${tiles || '<div class="empty" style="grid-column:1/-1">No brawler matches.</div>'}</div>`;
+  const d = S.draft;
+  const taken = new Set([...d.bans, ...d.blue, ...d.red]);
+  const q = S.gridQuery.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const key = b => b.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const starts = S.meta.brawlers.filter(b => key(b).startsWith(q));
+  const contains = S.meta.brawlers.filter(b => !key(b).startsWith(q) && key(b).includes(q));
+  // Free brawlers first, so Enter always takes a brawler that can still be chosen.
+  const list = [...starts, ...contains].sort((a, b) => taken.has(a.id) - taken.has(b.id));
+  const verb = step.kind === 'ban' ? 'ban' : step.team === 'blue' ? 'pick' : 'mark their pick';
+  return `<div class="section-title"><h2>Matches</h2><span>tap to ${verb} · Enter takes the first</span></div>
+    <div class="grid">${list.map(b => tile(b.id, { off: taken.has(b.id) })).join('') || '<div class="empty" style="grid-column:1/-1">No brawler matches.</div>'}</div>`;
 }
 
-function brawlerGrid(step) {
-  const list = S.meta.brawlers.filter(b => S.gridClass === 'all' || b.cls === S.gridClass);
-  const tiles = tilesHtml(step, list);
-  const classChips = ['all', ...CLASSES].map(c => `<button class="chip small ${S.gridClass === c ? 'on' : ''}" data-class="${esc(c)}">${c === 'all' ? 'All' : esc(c)}</button>`).join('');
-  return `<div class="section-title"><h2>All brawlers</h2><span>tap to ${verbFor(step)}</span></div>
-    <div class="chips">${classChips}</div>
-    <div class="grid">${tiles || '<div class="empty" style="grid-column:1/-1">No brawler matches.</div>'}</div>`;
+function draftBody(step) {
+  if (S.gridQuery.trim()) return searchResults(step);
+  const top = step.kind === 'pick' && step.team === 'blue' ? yourPicks() : quickTiles(step);
+  return top + brawlerGrid(step);
 }
 
 function draftView() {
   const d = S.draft;
   const map = mapById.get(d.mapId);
   const step = currentStep();
-  const started = d.blue.length + d.red.length > 0;
-  const edge = d.blue.length && d.red.length ? S.engine.draftEdge(d) : null;
 
   return `
     <header class="top">
       <button class="icon-btn" data-action="home" aria-label="Back to maps">${ICON.back}</button>
       <div class="title"><b>${esc(map.name)}</b><small>${modeIcon(map.mode)}${esc(modeName(map.mode))}</small></div>
-      <button class="icon-btn" data-action="undo" aria-label="Undo" ${S.history.length ? '' : 'disabled style="opacity:.4"'}>${ICON.undo}</button>
+      <button class="icon-btn" data-action="undo" aria-label="Undo" ${S.history.length ? '' : 'disabled'}>${ICON.undo}</button>
       <button class="text-btn" data-action="reset">Reset</button>
     </header>
-    <div class="first-pick"><span>First pick</span>
-      <div class="seg" role="group" aria-label="Who picks first">
-        <button class="${d.firstTeam === 'blue' ? 'on' : ''}" data-first="blue" ${started ? 'disabled' : ''}>Us</button>
-        <button class="${d.firstTeam === 'red' ? 'on' : ''}" data-first="red" ${started ? 'disabled' : ''}>Them</button>
-      </div>
-    </div>
-    <div class="board">
-      <div class="team blue"><div class="team-label">You</div><div class="slots">${slotsFor('blue')}</div></div>
-      <div class="team red"><div class="team-label">Enemy</div><div class="slots">${slotsFor('red')}</div></div>
-      ${bansRow()}
-    </div>
+    ${board()}
     ${turnBanner(step)}
-    ${edge != null ? edgeMeter(edge) : ''}
-    ${step.kind === 'done' ? teamChecks() : `${planCard(step)}${quickSearch(step)}<div id="r-draft">${draftBody(step)}</div>`}`;
+    ${step.kind === 'done' ? doneView() : `${quickSearch(step)}<div id="r-draft">${draftBody(step)}</div>`}`;
 }
 
-// Drafts move win chance by a few percent; skill decides the rest. Say it in words.
-function edgeWords(edge) {
-  const p = Math.round(edge * 100);
-  const est = S.engine.hasData ? '' : ' (estimate)';
-  if (p >= 58) return `Your draft is clearly better: about ${p}% to win${est}.`;
-  if (p >= 53) return `Your draft has the edge: about ${p}% to win${est}.`;
-  if (p > 47) return `Even draft: about ${p}% — it's down to how you play${est}.`;
-  if (p > 42) return `Their draft has the edge: about ${p}% for you${est}.`;
-  return `Their draft is clearly better: about ${p}% for you${est}.`;
+function doneView() {
+  return `${edgeMeter(S.engine.draftEdge(S.draft))}${teamChecks()}
+    <div class="row-btns"><button class="go-btn" data-action="again">Same map again</button><button class="text-btn" data-action="home">Change map</button></div>`;
 }
 
+// Drafts move win chance by a few percent; skill decides the rest.
 function edgeMeter(edge) {
   const p = Math.round(edge * 100);
   const label = p >= 58 ? 'Clearly ahead' : p >= 53 ? 'Ahead' : p > 47 ? 'Even' : p > 42 ? 'Behind' : 'Clearly behind';
@@ -530,16 +561,14 @@ function edgeMeter(edge) {
     <div class="edge-bar"><i style="width:${edge * 100}%"></i></div></button>`;
 }
 
-// What the team on the clock still needs, in plain words.
-function planCard(step) {
-  if (step.kind !== 'pick') return '';
-  const mine = step.team === 'blue';
-  const { needs } = S.engine.plan(S.draft, step.team);
-  const top = needs.slice(0, 3);
-  const body = top.length
-    ? top.map(n => `<li><b>${esc(n.title)}</b><span>${esc(n.why)}</span></li>`).join('')
-    : `<li><b>${mine ? 'Your team is well rounded' : 'Their team is well rounded'}</b><span>${mine ? 'Pick for counters and map strength.' : 'Expect them to pick for counters.'}</span></li>`;
-  return `<div class="plan ${step.team}"><h3>${mine ? 'Game plan' : 'What they need'}</h3><ul>${body}</ul></div>`;
+// What your team still needs, in plain words. Hidden on an empty draft, where it would say everything.
+function planCard() {
+  const d = S.draft;
+  if (!d.blue.length && !d.red.length) return '';
+  const { needs } = S.engine.plan(d, 'blue');
+  if (!needs.length) return '';
+  const body = needs.slice(0, 3).map(n => `<li><b>${esc(n.title)}</b><span>${esc(n.why)}</span></li>`).join('');
+  return `<div class="plan"><h3>Your team needs</h3><ul>${body}</ul></div>`;
 }
 
 // Final checklist for both teams.
@@ -549,10 +578,6 @@ function teamChecks() {
     return `<div class="check ${team}"><b>${label}</b><div>${items.map(i => `<span class="${i.ok ? 'ok' : 'miss'}">${i.ok ? '✓' : '✗'} ${esc(i.text)}</span>`).join('')}</div></div>`;
   };
   return `<div class="plan"><h3>Team check</h3>${row('blue', 'You')}${row('red', 'Enemy')}</div>`;
-}
-
-function draftBody(step) {
-  return S.gridQuery.trim() ? searchResults(step) : recommendations(step) + brawlerGrid(step);
 }
 
 function mineTiles() {
@@ -570,28 +595,33 @@ function sheetView() {
     const data = S.engine.hasData
       ? `<dl class="kv">
           <dt>Ranked games</dt><dd>${st.battles.ranked.toLocaleString()}</dd>
-          <dt>All 3v3 games</dt><dd>${st.battles.all.toLocaleString()}</dd>
           <dt>Days covered</dt><dd>${st.days}</dd>
           <dt>Ranked maps found</dt><dd>${st.rankedMaps.length}</dd>
           <dt>Updated</dt><dd>${ago(st.generatedAt)}</dd>
         </dl>`
-      : `<p><b>Live match stats aren't connected yet.</b> Until they are, picks are estimated from each brawler's class and the game mode (for example: marksmen in Knockout, tanks in Brawl Ball). Once the daily update is set up, everything switches to real ranked results automatically.</p>`;
+      : `<p><b>Live match stats aren't connected yet.</b> Until they are, picks are estimated from each brawler's class and the game mode (for example: marksmen in Knockout, tanks in Brawl Ball). Once the update job is set up, everything switches to real ranked results automatically.</p>`;
     inner = `<h2>How it works</h2>
-      <p>Pick the map, tap the bans and picks as they happen, and the list shows the best next brawler for that exact moment.</p>
+      <ol class="steps">
+        <li><b>Pick the map</b> your ranked game is on.</li>
+        <li><b>Bans:</b> tap the banned brawlers, or skip.</li>
+        <li><b>Your turn:</b> tap one of the suggested picks to lock it in.</li>
+        <li><b>Their turn:</b> tap what they picked. Their most likely picks are at the top.</li>
+      </ol>
+      <p>Tap a picked brawler on the board to remove it. Every tap can be undone.</p>
       <h3>Data</h3>${data}
       <h3>What the numbers mean</h3>
       <ul>
         <li><b>Edge</b> is roughly how much the pick changes your win chance, e.g. <b>+3.0%</b>.</li>
-        <li><b>Strong on this map</b>: win rate on this map in ranked games.</li>
-        <li><b>Beats / Struggles vs</b>: head-to-head results against the enemy's picks.</li>
+        <li><b>Strong on this map</b>: win rate on this map in ranked games. <b>Good in Gem Grab</b> means there aren't enough games on this map yet, so it uses the whole mode.</li>
+        <li><b>Beats / Weak vs</b>: head-to-head results against the enemy's picks.</li>
         <li><b>Good with</b>: how well it does next to your teammates.</li>
-        <li><b>Can counter</b>: if the enemy still picks after you, the app warns you about an easy answer to your pick.</li>
-        <li><b>Adds frontline / Adds range / Answers Bull…</b>: the team check. The app looks at what your team is missing and what the enemy's picks threaten (tanks, throwers, assassins, snipers, healers), and favours picks that cover it.</li>
+        <li><b>… counters it</b>: if the enemy still picks after you, the app warns you about an easy answer to your pick.</li>
+        <li><b>Adds frontline / Adds range / Answers Bull…</b>: the team check. The app looks at what your team is missing and what the enemy's picks threaten, and favours picks that cover it.</li>
       </ul>
       <h3>Why is the draft edge close to 50%?</h3>
-      <p>Because that's how Brawl Stars works: even a great draft only moves your win chance by a few percent, usually <b>45–60%</b>. Aim and teamwork decide the rest. "Ahead" at 54% means you'd win about 5 more games out of 100 than with an even draft.</p>
-      <p>${S.engine.hasData ? 'The numbers come from real ranked results.' : '<b>Right now the numbers are estimates</b> from brawler types only, so they stay close to 50%. They get sharper once real match stats arrive.'}</p>
-      <p>Stats come from the official Brawl Stars API (recent battles of top players) and refresh every day. Brawler and map info is from Brawlify.</p>
+      <p>Because that's how Brawl Stars works: even a great draft only moves your win chance by a few percent, usually <b>45–60%</b>. Aim and teamwork decide the rest. "Ahead" at 54% means you'd win about 4 more games out of 100 than with an even draft.</p>
+      <p>Small samples are pulled toward safer estimates, so a brawler doesn't jump to the top after a few lucky games.</p>
+      <p>Stats come from the official Brawl Stars API (recent ranked battles of top players) and refresh every 4 hours. Brawler and map info is from Brawlify.</p>
       <p style="font-size:12px;color:var(--faint)">Unofficial fan project. Not endorsed by Supercell. This app doesn't touch the game itself; you tap the picks.</p>
       <div class="row"><button class="text-btn" data-sheet="">Close</button></div>`;
   } else if (S.sheet === 'mine') {
@@ -615,7 +645,7 @@ $app.addEventListener('click', e => {
   const ds = t.dataset;
 
   if ('sheet' in ds) { S.sheet = ds.sheet || null; render(); return; }
-  if (ds.mode) { S.mode = ds.mode; S.mapQuery = ''; save(); render(); return; }
+  if (ds.mode) { S.mode = ds.mode; S.mapQuery = ''; S.allMaps = false; save(); render(); return; }
   if (ds.map) { newDraft(Number(ds.map)); return; }
   if (ds.pick) { choose(Number(ds.pick)); return; }
   if (ds.remove) { removeFrom(ds.remove, Number(ds.id)); return; }
@@ -642,18 +672,21 @@ $app.addEventListener('click', e => {
 
   switch (ds.action) {
     case 'home': S.view = 'maps'; viewChangedAt = Date.now(); save(); render(); window.scrollTo(0, 0); break;
+    case 'resume': S.view = 'draft'; viewChangedAt = Date.now(); save(); render(); window.scrollTo(0, 0); break;
     case 'undo': undo(); break;
     case 'reset': {
       snapshot();
       const d = S.draft;
       S.draft = { ...d, bans: [], blue: [], red: [], bansDone: false };
-      save(); render();
+      S.gridQuery = '';
+      save(); render(); window.scrollTo(0, 0);
       toast('Draft cleared', { label: 'Undo', run: undo });
       break;
     }
     case 'again': newDraft(S.draft.mapId); break;
-    case 'skip-bans': snapshot(); S.draft.bansDone = true; save(); render(); break;
+    case 'skip-bans': snapshot(); S.draft.bansDone = true; save(); render(); window.scrollTo(0, 0); break;
     case 'more': S.showAll = !S.showAll; render(); break;
+    case 'all-maps': S.allMaps = !S.allMaps; render(); break;
   }
 });
 
@@ -665,11 +698,13 @@ $app.addEventListener('input', e => {
   t.parentElement.querySelector('.clear')?.toggleAttribute('hidden', !t.value);
 });
 
-// Enter in the brawler search picks the only (or first) match: fast during the draft timer.
+// Enter in the brawler search picks the first free match: fast during the draft timer.
 $app.addEventListener('keydown', e => {
   if (e.key !== 'Enter' || e.target.id !== 'gridq') return;
-  const first = document.querySelector('.grid .tile:not(.off)');
-  if (first) { e.preventDefault(); e.target.blur(); choose(Number(first.dataset.pick)); }
+  e.preventDefault();
+  const first = document.querySelector('#r-draft .tile:not(.off)');
+  if (first && S.gridQuery.trim()) choose(Number(first.dataset.pick));
+  else e.target.blur();
 });
 
 document.addEventListener('keydown', e => {
